@@ -245,7 +245,7 @@ async function fetchGsViaBypassHtml(url, { signal = null, timeoutMs = null, forc
     try {
         result = await client.getHtml(url, {
             signal,
-            timeout: Math.max(8000, Number(timeoutMs) || GS_BYPASS_HTML_TIMEOUT_MS),
+            timeout: Math.max(GS_BYPASS_HTML_TIMEOUT_MS, Number(timeoutMs) || 0),
             bypassCache: Boolean(force),
             providerName: PROVIDER_NAME,
             coalesce: !force

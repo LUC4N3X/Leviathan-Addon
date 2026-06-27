@@ -257,6 +257,55 @@ test('clearance manager recovers from an empty/poisoned cookie cache via cache c
   assert.doesNotMatch(String(session.url || ''), /__cfcb=/);
 });
 
+test('bustCache solve bypasses the per-URL cooldown so stale-cookie recovery can re-solve', async (t) => {
+  const cookieCalls = [];
+  const endpoint = await listen(async (req, res) => {
+    const parsed = new URL(req.url, endpoint.url);
+    if (parsed.pathname === '/cache/stats' || parsed.pathname === '/cache/clear') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+    cookieCalls.push(parsed.searchParams.get('url') || '');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      solution: {
+        url: 'https://guardoserie.run/prova/',
+        status: 200,
+        userAgent: 'Mozilla/5.0 UnitTest',
+        cookies: [{ name: 'cf_clearance', value: 'clear' }]
+      }
+    }));
+  });
+
+  t.after(async () => {
+    await endpoint.close();
+  });
+
+  const manager = createCfClearanceManager({
+    providerName: 'unit-cooldown',
+    endpoints: [endpoint.url],
+    logger: noOpLogger(),
+    solveTimeoutMs: 12_000,
+    cooldownMs: 60_000
+  });
+
+  const first = await manager.solve('https://guardoserie.run/prova/', null, {});
+  assert.ok(first, 'expected the first solve to succeed');
+  assert.equal(cookieCalls.length, 1);
+
+  const skipped = await manager.solve('https://guardoserie.run/prova/', null, {});
+  assert.equal(skipped, null, 'expected the cooldown to skip a plain re-solve');
+  assert.equal(cookieCalls.length, 1, 'no new upstream call should be made while cooling down');
+
+  const recovered = await manager.solve('https://guardoserie.run/prova/', null, { bustCache: true });
+  assert.ok(recovered, 'expected the bustCache solve to bypass the cooldown');
+  assert.equal(recovered.cf_clearance, 'clear');
+  assert.equal(cookieCalls.length, 2, 'bustCache must force a fresh upstream solve');
+  assert.match(cookieCalls[1], /__cfcb=/, 'the bustCache re-solve must carry the cache-bust param');
+});
+
 test('clearance manager coalesces concurrent solves with the same shared key', async (t) => {
   let calls = 0;
   const good = await listen(async (req, res) => {
