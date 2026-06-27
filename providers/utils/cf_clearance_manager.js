@@ -847,7 +847,7 @@ function createCfClearanceManager(options = {}) {
 
     pruneCooldown(now);
     const last = cooldown.get(key) || 0;
-    if (!meta.force && now - last < cooldownMs) return null;
+    if (!meta.force && !meta.bustCache && now - last < cooldownMs) return null;
     cooldown.set(key, now);
 
     const promise = solveLimiter(async () => {

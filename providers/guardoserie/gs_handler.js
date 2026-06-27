@@ -217,6 +217,7 @@ const GS_FORWARD_ENABLED = envFlag('GUARDOSERIE_IMPIT_FORWARD_ENABLED', false);
 const GS_FORWARD_TIMEOUT_MS = envNumber('GUARDOSERIE_IMPIT_FORWARD_TIMEOUT_MS', 9500, 2000, 20000);
 
 const GS_BYPASS_HTML_ENABLED = envFlag('GUARDOSERIE_BYPASS_HTML', true);
+const GS_BYPASS_HTML_PRIMARY = envFlag('GUARDOSERIE_BYPASS_HTML_PRIMARY', false);
 const GS_BYPASS_HTML_TIMEOUT_MS = envNumber('GUARDOSERIE_BYPASS_HTML_TIMEOUT_MS', 45000, 8000, 120000);
 let gsBypassHtmlClient = null;
 
@@ -245,7 +246,7 @@ async function fetchGsViaBypassHtml(url, { signal = null, timeoutMs = null, forc
     try {
         result = await client.getHtml(url, {
             signal,
-            timeout: Math.max(8000, Number(timeoutMs) || GS_BYPASS_HTML_TIMEOUT_MS),
+            timeout: Math.max(GS_BYPASS_HTML_TIMEOUT_MS, Number(timeoutMs) || 0),
             bypassCache: Boolean(force),
             providerName: PROVIDER_NAME,
             coalesce: !force
@@ -383,6 +384,18 @@ async function smartFetch(url, fetchOptions = {}) {
         if (GS_FORWARD_STRATEGY === 'forward-only') return '';
     }
 
+    const bypassHtmlEligible = !isPost && GS_BYPASS_HTML_ENABLED && fetchOptions.allowBypassHtml !== false;
+    let bypassHtmlPrimaryTried = false;
+
+    if (GS_BYPASS_HTML_PRIMARY && bypassHtmlEligible && !gsHttp.isSessionFresh() && !fetchOptions.signal?.aborted && Boolean(getGsBypassHtmlClient())) {
+        bypassHtmlPrimaryTried = true;
+        const primaryHtml = await fetchGsViaBypassHtml(url, {
+            signal: fetchOptions.signal,
+            timeoutMs: fetchOptions.timeoutMs
+        });
+        if (primaryHtml) return primaryHtml;
+    }
+
     const html = await smartFetchViaShield(url, fetchOptions);
     if (html) return html;
 
@@ -395,12 +408,14 @@ async function smartFetch(url, fetchOptions = {}) {
         if (forwardHtml) return forwardHtml;
     }
 
-    if (!isPost && GS_BYPASS_HTML_ENABLED && fetchOptions.allowBypassHtml !== false && !fetchOptions.signal?.aborted) {
-        const bypassHtml = await fetchGsViaBypassHtml(url, {
-            signal: fetchOptions.signal,
-            timeoutMs: fetchOptions.timeoutMs
-        });
-        if (bypassHtml) return bypassHtml;
+    if (bypassHtmlEligible && !fetchOptions.signal?.aborted) {
+        if (!bypassHtmlPrimaryTried) {
+            const bypassHtml = await fetchGsViaBypassHtml(url, {
+                signal: fetchOptions.signal,
+                timeoutMs: fetchOptions.timeoutMs
+            });
+            if (bypassHtml) return bypassHtml;
+        }
 
         if (!fetchOptions.signal?.aborted) {
             const bypassHtmlForced = await fetchGsViaBypassHtml(url, {
@@ -559,6 +574,7 @@ function warmupGsClearanceInBackground(reason = 'startup', options = {}) {
             const html = await smartFetch(url, {
                 ttl: TTL_SERIES,
                 allowCloudflareBypass: allowGsFlareForReason(reason),
+                allowBypassHtml: !hasEndpoint,
                 timeoutMs: sessionReady ? GS_BACKGROUND_PRIME_TIMEOUT_MS : Math.max(DIRECT_FETCH_TIMEOUT_MS, GS_BACKGROUND_PRIME_TIMEOUT_MS)
             });
             homeReady = Boolean(html);
@@ -870,6 +886,7 @@ function primeGsUrlsInBackground(urls = [], options = {}) {
                 const html = await smartFetch(url, {
                     ttl,
                     allowCloudflareBypass: GS_CAN_SOLVE_CLEARANCE && (options.allowCloudflareBypass === true || allowGsFlareForReason(reason)),
+                    allowBypassHtml: false,
                     timeoutMs: GS_BACKGROUND_PRIME_TIMEOUT_MS,
                     allowEmergencyClearance: false
                 });
