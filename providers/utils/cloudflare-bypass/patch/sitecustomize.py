@@ -1,8 +1,10 @@
 import asyncio
+import functools
+import importlib
 import logging
 import os
 
-logger = logging.getLogger("cf_checkbox_patch")
+logger = logging.getLogger("leviathan_cf_patch")
 
 CHECKBOX_SELECTORS = (
     'input[type="checkbox"]',
@@ -12,6 +14,88 @@ CHECKBOX_SELECTORS = (
 )
 
 COOKIE_TTL_MINUTES = max(1, int(os.environ.get("CF_COOKIE_TTL_MINUTES", "15") or "15"))
+FORCE_HEADLESS = str(os.environ.get("CLOUDFLARE_BYPASS_HEADLESS", os.environ.get("PLAYWRIGHT_HEADLESS", "true"))).strip().lower() not in {"0", "false", "no", "off", "headed"}
+FORCE_BROWSER_ARGS = (
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+)
+
+
+def _merge_browser_args(value):
+    if value is None:
+        merged = []
+    elif isinstance(value, (list, tuple)):
+        merged = [str(item) for item in value if str(item).strip()]
+    else:
+        merged = [str(value)]
+
+    present = set(merged)
+    for item in FORCE_BROWSER_ARGS:
+        if item not in present:
+            merged.append(item)
+            present.add(item)
+    return merged
+
+
+def _force_headless_kwargs(kwargs):
+    normalized = dict(kwargs or {})
+    if FORCE_HEADLESS:
+        normalized["headless"] = True
+    normalized["args"] = _merge_browser_args(normalized.get("args"))
+    return normalized
+
+
+def _wrap_async_method(original):
+    if getattr(original, "_leviathan_headless_patch", False):
+        return original
+
+    @functools.wraps(original)
+    async def wrapped(self, *args, **kwargs):
+        return await original(self, *args, **_force_headless_kwargs(kwargs))
+
+    wrapped._leviathan_headless_patch = True
+    return wrapped
+
+
+def _wrap_sync_method(original):
+    if getattr(original, "_leviathan_headless_patch", False):
+        return original
+
+    @functools.wraps(original)
+    def wrapped(self, *args, **kwargs):
+        return original(self, *args, **_force_headless_kwargs(kwargs))
+
+    wrapped._leviathan_headless_patch = True
+    return wrapped
+
+
+def _install_playwright_headless_patch():
+    patched = 0
+    targets = (
+        ("playwright.async_api._generated", "BrowserType", ("launch", "launch_persistent_context"), _wrap_async_method),
+        ("playwright.sync_api._generated", "BrowserType", ("launch", "launch_persistent_context"), _wrap_sync_method),
+        ("playwright._impl._browser_type", "BrowserType", ("launch", "launch_persistent_context"), _wrap_async_method),
+    )
+
+    for module_name, class_name, method_names, wrapper in targets:
+        try:
+            module = importlib.import_module(module_name)
+            cls = getattr(module, class_name)
+            for method_name in method_names:
+                original = getattr(cls, method_name, None)
+                if original is None:
+                    continue
+                setattr(cls, method_name, wrapper(original))
+                patched += 1
+        except Exception as exc:
+            logger.debug("playwright headless patch skipped for %s.%s: %s", module_name, class_name, exc)
+
+    if patched:
+        logger.info("Playwright Docker headless patch installed on %d launch methods", patched)
+    else:
+        logger.warning("Playwright Docker headless patch was not installed because no launch method was found")
 
 
 def _install_checkbox_patch():
@@ -146,7 +230,7 @@ def _install_cookie_ttl_patch():
     logger.info("Cloudflare cookie cache TTL capped at %d minutes", COOKIE_TTL_MINUTES)
 
 
-for installer in (_install_checkbox_patch, _install_cookie_ttl_patch):
+for installer in (_install_playwright_headless_patch, _install_checkbox_patch, _install_cookie_ttl_patch):
     try:
         installer()
     except Exception as exc:
