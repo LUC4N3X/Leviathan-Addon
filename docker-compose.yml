@@ -466,10 +466,10 @@ services:
       - cloudflare-bypass-cache:/data
       - ./providers/utils/cloudflare-bypass/patch:/opt/cf-patch:ro
 
-    shm_size: "${CLOUDFLARE_BYPASS_SHM_SIZE:-512m}"
-    mem_limit: ${CLOUDFLARE_BYPASS_MEM_LIMIT:-1400m}
-    memswap_limit: ${CLOUDFLARE_BYPASS_MEMSWAP_LIMIT:-1800m}
-    cpus: "${CLOUDFLARE_BYPASS_CPUS:-1.0}"
+    shm_size: "${CLOUDFLARE_BYPASS_SHM_SIZE:-1g}"
+    mem_limit: ${CLOUDFLARE_BYPASS_MEM_LIMIT:-2560m}
+    memswap_limit: ${CLOUDFLARE_BYPASS_MEMSWAP_LIMIT:-3072m}
+    cpus: "${CLOUDFLARE_BYPASS_CPUS:-2.0}"
     pids_limit: 512
 
     security_opt:

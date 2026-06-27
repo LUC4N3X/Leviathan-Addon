@@ -217,6 +217,7 @@ const GS_FORWARD_ENABLED = envFlag('GUARDOSERIE_IMPIT_FORWARD_ENABLED', false);
 const GS_FORWARD_TIMEOUT_MS = envNumber('GUARDOSERIE_IMPIT_FORWARD_TIMEOUT_MS', 9500, 2000, 20000);
 
 const GS_BYPASS_HTML_ENABLED = envFlag('GUARDOSERIE_BYPASS_HTML', true);
+const GS_BYPASS_HTML_PRIMARY = envFlag('GUARDOSERIE_BYPASS_HTML_PRIMARY', true);
 const GS_BYPASS_HTML_TIMEOUT_MS = envNumber('GUARDOSERIE_BYPASS_HTML_TIMEOUT_MS', 45000, 8000, 120000);
 let gsBypassHtmlClient = null;
 
@@ -383,6 +384,18 @@ async function smartFetch(url, fetchOptions = {}) {
         if (GS_FORWARD_STRATEGY === 'forward-only') return '';
     }
 
+    const bypassHtmlEligible = !isPost && GS_BYPASS_HTML_ENABLED && fetchOptions.allowBypassHtml !== false;
+    let bypassHtmlPrimaryTried = false;
+
+    if (GS_BYPASS_HTML_PRIMARY && bypassHtmlEligible && !gsHttp.isSessionFresh() && !fetchOptions.signal?.aborted && Boolean(getGsBypassHtmlClient())) {
+        bypassHtmlPrimaryTried = true;
+        const primaryHtml = await fetchGsViaBypassHtml(url, {
+            signal: fetchOptions.signal,
+            timeoutMs: fetchOptions.timeoutMs
+        });
+        if (primaryHtml) return primaryHtml;
+    }
+
     const html = await smartFetchViaShield(url, fetchOptions);
     if (html) return html;
 
@@ -395,12 +408,14 @@ async function smartFetch(url, fetchOptions = {}) {
         if (forwardHtml) return forwardHtml;
     }
 
-    if (!isPost && GS_BYPASS_HTML_ENABLED && fetchOptions.allowBypassHtml !== false && !fetchOptions.signal?.aborted) {
-        const bypassHtml = await fetchGsViaBypassHtml(url, {
-            signal: fetchOptions.signal,
-            timeoutMs: fetchOptions.timeoutMs
-        });
-        if (bypassHtml) return bypassHtml;
+    if (bypassHtmlEligible && !fetchOptions.signal?.aborted) {
+        if (!bypassHtmlPrimaryTried) {
+            const bypassHtml = await fetchGsViaBypassHtml(url, {
+                signal: fetchOptions.signal,
+                timeoutMs: fetchOptions.timeoutMs
+            });
+            if (bypassHtml) return bypassHtml;
+        }
 
         if (!fetchOptions.signal?.aborted) {
             const bypassHtmlForced = await fetchGsViaBypassHtml(url, {
