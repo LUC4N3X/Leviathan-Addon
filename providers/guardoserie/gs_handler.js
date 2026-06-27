@@ -559,6 +559,7 @@ function warmupGsClearanceInBackground(reason = 'startup', options = {}) {
             const html = await smartFetch(url, {
                 ttl: TTL_SERIES,
                 allowCloudflareBypass: allowGsFlareForReason(reason),
+                allowBypassHtml: !hasEndpoint,
                 timeoutMs: sessionReady ? GS_BACKGROUND_PRIME_TIMEOUT_MS : Math.max(DIRECT_FETCH_TIMEOUT_MS, GS_BACKGROUND_PRIME_TIMEOUT_MS)
             });
             homeReady = Boolean(html);
