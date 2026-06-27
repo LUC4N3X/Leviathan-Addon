@@ -14,7 +14,9 @@ const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
-const { createCloudflareBypass, envFlag } = require('../utils/cloudflare_bypass');
+const { createCloudflareBypass, envFlag, envNumber } = require('../utils/cloudflare_bypass');
+const { buildForwardProxyUrl, normalizeForwardProxyBase } = require('../../core/proxy/forward_proxy_config');
+const { createCloudflareBypassServiceClient, getConfiguredBypassEndpoints } = require('../utils/cf_bypass_service_client');
 const { createLayeredFetchClient } = require('../utils/provider_fetch_orchestrator');
 const { getProviderDomain } = require('../utils/provider_domain_registry');
 const INITIAL_GS_DOMAIN = process.env.GUARDOSERIE_BASE_URL || process.env.GUARDOSERIE_DOMAIN || getProviderDomain('guardoserie', 'https://guardoserie.courses');
@@ -206,7 +208,148 @@ const gsShield = createCloudflareBypass({
 });
 const gsHttp = gsShield.guard;
 const lightClient = gsHttp.lightClient;
-function smartFetch(url, fetchOptions = {}) {
+
+const GS_FORWARD_UA = process.env.GUARDOSERIE_IMPIT_USER_AGENT
+    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+const GS_FORWARD_BROWSER = process.env.GUARDOSERIE_IMPIT_BROWSER || 'chrome142';
+const GS_FORWARD_STRATEGY = String(process.env.GUARDOSERIE_IMPIT_STRATEGY || 'forward-first').trim().toLowerCase();
+const GS_FORWARD_ENABLED = envFlag('GUARDOSERIE_IMPIT_FORWARD_ENABLED', false);
+const GS_FORWARD_TIMEOUT_MS = envNumber('GUARDOSERIE_IMPIT_FORWARD_TIMEOUT_MS', 9500, 2000, 20000);
+
+const GS_BYPASS_HTML_ENABLED = envFlag('GUARDOSERIE_BYPASS_HTML', true);
+const GS_BYPASS_HTML_TIMEOUT_MS = envNumber('GUARDOSERIE_BYPASS_HTML_TIMEOUT_MS', 45000, 8000, 120000);
+let gsBypassHtmlClient = null;
+
+function getGsBypassHtmlClient() {
+    if (gsBypassHtmlClient !== null) return gsBypassHtmlClient || null;
+    const endpoints = getConfiguredBypassEndpoints();
+    if (!endpoints.length) {
+        gsBypassHtmlClient = false;
+        return null;
+    }
+    try {
+        gsBypassHtmlClient = createCloudflareBypassServiceClient({ endpoint: endpoints[0] });
+    } catch (error) {
+        gsDebug('bypass html client init failed', { error: error?.message || String(error) });
+        gsBypassHtmlClient = false;
+    }
+    return gsBypassHtmlClient || null;
+}
+
+async function fetchGsViaBypassHtml(url, { signal = null, timeoutMs = null, force = false } = {}) {
+    if (!GS_BYPASS_HTML_ENABLED) return null;
+    const client = getGsBypassHtmlClient();
+    if (!client) return null;
+
+    let result = null;
+    try {
+        result = await client.getHtml(url, {
+            signal,
+            timeout: Math.max(8000, Number(timeoutMs) || GS_BYPASS_HTML_TIMEOUT_MS),
+            bypassCache: Boolean(force),
+            providerName: PROVIDER_NAME,
+            coalesce: !force
+        });
+    } catch (error) {
+        if (isAbortLikeError(error)) throw error;
+        gsDebug('bypass html fetch error', { url, force, error: error?.message || String(error) });
+        return null;
+    }
+
+    const html = String(result?.html || '');
+    const status = Number(result?.status || 0);
+    const ok = Boolean(html) && !gsIsChallengeHtml(html, status) && gsHasUsableHtml(html);
+    gsDebug(ok ? 'bypass html fetch ok' : 'bypass html fetch miss', { url, force, status, bytes: html.length });
+    return ok ? html : null;
+}
+
+function getGsForwardProxyBase() {
+    const raw = process.env.GUARDOSERIE_FORWARD_PROXY || process.env.FORWARD_PROXY;
+    try {
+        return normalizeForwardProxyBase(raw, 'guardoserie');
+    } catch (_) {
+        return '';
+    }
+}
+
+function buildGsForwardUrl(targetUrl) {
+    const base = getGsForwardProxyBase();
+    if (!base) return '';
+    try {
+        return buildForwardProxyUrl(targetUrl, { context: 'guardoserie', base });
+    } catch (error) {
+        gsDebug('forward proxy url build failed', { url: targetUrl, error: error?.message || String(error) });
+        return '';
+    }
+}
+
+function gsIsChallengeHtml(html, status) {
+    if (status === 403 || status === 503) return true;
+    const low = String(html || '').toLowerCase();
+    if (!low) return false;
+    if (/just a moment|attention required|cf-challenge|challenge-platform|cdn-cgi\/challenge|turnstile|_cf_chl/.test(low)) return true;
+    return low.includes('cloudflare') && low.includes('ray id');
+}
+
+function gsHasUsableHtml(html) {
+    const text = String(html || '');
+    if (text.length <= 600) return false;
+    return /<a\b|<iframe\b|wp-json|wp-sitemap|guarda|streaming|\/film|\/serie|search/i.test(text);
+}
+
+function gsForwardResponseText(response) {
+    const data = response?.data ?? response?.body;
+    if (typeof data === 'string') return data;
+    if (Buffer.isBuffer(data)) return data.toString('utf8');
+    if (data == null) return '';
+    return String(data);
+}
+
+async function fetchGsViaForwardProxy(url, { signal = null, timeoutMs = null, referer = null } = {}) {
+    if (!GS_FORWARD_ENABLED) return null;
+    const forwardUrl = buildGsForwardUrl(url);
+    if (!forwardUrl || forwardUrl === url) return null;
+
+    const base = normalizeBaseUrl(getTargetDomain()) || INITIAL_GS_DOMAIN;
+    const timeout = Math.max(GS_FORWARD_TIMEOUT_MS, Number(timeoutMs) || 0);
+    const headers = {
+        'User-Agent': GS_FORWARD_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        Referer: referer || `${base}/`
+    };
+
+    let response = null;
+    try {
+        response = await requestWithImpitRotating(forwardUrl, {
+            method: 'GET',
+            headers,
+            timeout,
+            responseType: 'text',
+            browser: GS_FORWARD_BROWSER,
+            maxBrowserAttempts: 1,
+            totalTimeoutMs: timeout + 300,
+            retryOnStatuses: [403, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
+            retryOnChallenge: false,
+            http3: false,
+            ignoreTlsErrors: true,
+            fingerprint: { userAgent: GS_FORWARD_UA },
+            signal
+        });
+    } catch (error) {
+        if (isAbortLikeError(error)) throw error;
+        gsDebug('forward proxy fetch error', { url, error: error?.message || String(error) });
+        return null;
+    }
+
+    const status = Number(response?.statusCode ?? response?.status ?? 0);
+    const text = gsForwardResponseText(response);
+    const ok = status >= 200 && status < 400 && Boolean(text) && !gsIsChallengeHtml(text, status) && gsHasUsableHtml(text);
+    gsDebug(ok ? 'forward proxy fetch ok' : 'forward proxy fetch miss', { url, status, bytes: text.length });
+    return ok ? text : null;
+}
+
+async function smartFetchViaShield(url, fetchOptions = {}) {
     const sessionFresh = gsHttp.isSessionFresh();
     const sessionFastPath = sessionFresh && fetchOptions.preferSessionFastPath !== false;
     if (!sessionFastPath)
@@ -219,6 +362,57 @@ function smartFetch(url, fetchOptions = {}) {
         skipNativeBypass: true,
         reason: fetchOptions.reason || 'session-fastpath'
     });
+}
+
+async function smartFetch(url, fetchOptions = {}) {
+    const isPost = Boolean(fetchOptions.isPost);
+    const forwardEligible = GS_FORWARD_ENABLED
+        && !isPost
+        && fetchOptions.allowForwardProxy !== false
+        && GS_FORWARD_STRATEGY !== 'shield-only'
+        && GS_FORWARD_STRATEGY !== 'direct-only'
+        && Boolean(getGsForwardProxyBase());
+
+    if (forwardEligible && GS_FORWARD_STRATEGY !== 'shield-first') {
+        const html = await fetchGsViaForwardProxy(url, {
+            signal: fetchOptions.signal,
+            timeoutMs: fetchOptions.timeoutMs,
+            referer: fetchOptions.referer
+        });
+        if (html) return html;
+        if (GS_FORWARD_STRATEGY === 'forward-only') return '';
+    }
+
+    const html = await smartFetchViaShield(url, fetchOptions);
+    if (html) return html;
+
+    if (forwardEligible && GS_FORWARD_STRATEGY === 'shield-first') {
+        const forwardHtml = await fetchGsViaForwardProxy(url, {
+            signal: fetchOptions.signal,
+            timeoutMs: fetchOptions.timeoutMs,
+            referer: fetchOptions.referer
+        });
+        if (forwardHtml) return forwardHtml;
+    }
+
+    if (!isPost && GS_BYPASS_HTML_ENABLED && fetchOptions.allowBypassHtml !== false && !fetchOptions.signal?.aborted) {
+        const bypassHtml = await fetchGsViaBypassHtml(url, {
+            signal: fetchOptions.signal,
+            timeoutMs: fetchOptions.timeoutMs
+        });
+        if (bypassHtml) return bypassHtml;
+
+        if (!fetchOptions.signal?.aborted) {
+            const bypassHtmlForced = await fetchGsViaBypassHtml(url, {
+                signal: fetchOptions.signal,
+                timeoutMs: fetchOptions.timeoutMs,
+                force: true
+            });
+            if (bypassHtmlForced) return bypassHtmlForced;
+        }
+    }
+
+    return html;
 }
 gsInfo('HTTP Shield active', { ...gsShield.getState?.(), topSpeed: GS_TOP_SPEED });
 const refreshTargetDomain = (...args) => gsHttp.refreshTargetDomain(...args);
@@ -676,7 +870,8 @@ function primeGsUrlsInBackground(urls = [], options = {}) {
                 const html = await smartFetch(url, {
                     ttl,
                     allowCloudflareBypass: GS_CAN_SOLVE_CLEARANCE && (options.allowCloudflareBypass === true || allowGsFlareForReason(reason)),
-                    timeoutMs: GS_BACKGROUND_PRIME_TIMEOUT_MS
+                    timeoutMs: GS_BACKGROUND_PRIME_TIMEOUT_MS,
+                    allowEmergencyClearance: false
                 });
                 if (html)
                     ok += 1;
@@ -695,13 +890,11 @@ function primeGsStaticPagesInBackground(reason = 'startup-static-prime') {
     primeGsUrlsInBackground([
         buildGsUrl('/'),
         buildGsUrl(GS_MOVIE_LIST_PATH),
-        buildGsUrl('/film/'),
-        buildGsUrl('/serie/'),
-        buildGsUrl('/serietv/')
+        buildGsUrl('/serie/')
     ], {
         ttl: TTL_SEARCH,
         reason,
-        max: 5
+        max: 3
     });
 }
 if (GS_BACKGROUND_CLEARANCE_ENABLED) {

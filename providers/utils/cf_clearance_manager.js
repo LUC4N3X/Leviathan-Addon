@@ -971,7 +971,17 @@ function createCfClearanceManager(options = {}) {
               sharedKey: sharedKey || undefined
             });
 
-            let result = await attemptSolve(selectedEndpoint, clearanceUrl);
+            let result;
+            if (meta.bustCache && !controller.signal.aborted) {
+              await clearEndpointCacheOnce(selectedEndpoint, controller.signal);
+              result = await attemptSolve(
+                selectedEndpoint,
+                appendCacheBustParam(clearanceUrl, cacheBustParam),
+                { bust: true, sessionBase: clearanceUrl }
+              );
+            } else {
+              result = await attemptSolve(selectedEndpoint, clearanceUrl);
+            }
 
             // The bypass replied 200 but without usable cookies — almost always a
             // poisoned/empty entry served straight from the upstream URL-keyed
